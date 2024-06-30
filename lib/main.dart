@@ -1,32 +1,90 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:html/dom.dart' as dom;
 import 'package:http/http.dart' as http;
-import 'package:html/parser.dart' show parse;
-import 'package:web_scraper/web_scraper.dart';
+import 'package:html/parser.dart' as parser;
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:intl/intl.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
-  runApp(Home());
+
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+      FlutterLocalNotificationsPlugin();
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  final InitializationSettings initializationSettings =
+      InitializationSettings(android: initializationSettingsAndroid);
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+
+  // Request notification permission for Android 13 and higher
+  if (await Permission.notification.isDenied) {
+    await Permission.notification.request();
+  }
+  runApp(
+      Home(flutterLocalNotificationsPlugin: flutterLocalNotificationsPlugin));
 }
 
 class Home extends StatelessWidget {
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
+
+  Home({required this.flutterLocalNotificationsPlugin});
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: AuthApp(),
+      home: AuthApp(
+          flutterLocalNotificationsPlugin: flutterLocalNotificationsPlugin),
     );
   }
 }
 
-class AuthApp extends StatelessWidget {
+class AuthApp extends StatefulWidget {
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
+
+  AuthApp({required this.flutterLocalNotificationsPlugin});
+  @override
+  _AuthAppState createState() => _AuthAppState();
+}
+
+class _AuthAppState extends State<AuthApp> {
   TextEditingController _controller = TextEditingController();
   int a = 0;
+  int pass = 0;
+  String at = '';
+  Timer? timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _getPass();
+  }
+
+  Future<void> _getPass() async {
+    try {
+      DatabaseReference ref = FirebaseDatabase.instance.ref();
+      DataSnapshot snapshot = await ref.get();
+
+      if (snapshot.exists && snapshot.value != null) {
+        Map<dynamic, dynamic> values = snapshot.value as Map<dynamic, dynamic>;
+        String lastValue = values['auth'].last.toString();
+
+        setState(() {
+          pass = int.parse(lastValue);
+        });
+      }
+    } catch (e) {
+      print('Error fetching data from Firebase: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -59,16 +117,31 @@ class AuthApp extends StatelessWidget {
                 ),
               ),
             ),
-            SizedBox(height: 20),
+            SizedBox(height: 10),
+            Text(at),
+            SizedBox(height: 10),
             ElevatedButton(
               onPressed: () {
                 a = int.parse(_controller.text);
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => MyApp(result: a),
-                  ),
-                );
+                if (a == pass) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => MyApp(
+                          flutterLocalNotificationsPlugin:
+                              widget.flutterLocalNotificationsPlugin),
+                    ),
+                  );
+                } else {
+                  setState(() {
+                    at = '암호를 확인해주세요';
+                    timer = Timer(Duration(seconds: 1), () {
+                      setState(() {
+                        at = '';
+                      });
+                    });
+                  });
+                }
               },
               child: Text('로그인'),
             ),
@@ -80,10 +153,9 @@ class AuthApp extends StatelessWidget {
 }
 
 class MyApp extends StatefulWidget {
-  final int result;
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin;
 
-  MyApp({required this.result});
-
+  MyApp({required this.flutterLocalNotificationsPlugin});
   @override
   _MyAppState createState() => _MyAppState();
 }
@@ -91,20 +163,23 @@ class MyApp extends StatefulWidget {
 class _MyAppState extends State<MyApp> {
   int humiValue = 50;
   int? b;
-  int externalHumidity = 0; // External humidity (%)
-  double internalHumidity = 0;
   List<double> humidityData = [30.0, 40.0, 35.0, 45.0, 50.0, 55.0, 50.0];
+  List<String> timeData = ['0', '0', '0', '0', '0', '0', '0'];
   late Timer timer;
   bool isHumidifierOn = false;
   int a = Random().nextInt(2);
   double sv = 35;
+  String mt = 'MBC천호 관제센터';
 
   @override
   void initState() {
     super.initState();
-    b = widget.result;
-    // Start a timer to update the humidity every 2 seconds
-    timer = Timer.periodic(Duration(seconds: 5), (Timer t) {
+    updateTimeData();
+    getWebsiteData();
+    _getLastHumiValue();
+    timer = Timer.periodic(Duration(seconds: 300), (Timer t) {
+      updateTimeData();
+      getWebsiteData();
       _getLastHumiValue();
     });
   }
@@ -115,125 +190,189 @@ class _MyAppState extends State<MyApp> {
     super.dispose();
   }
 
+  void updateTimeData() {
+    DateTime now = DateTime.now();
+    int currentMinute = now.minute;
+    int currentHour = now.hour;
+    print(currentMinute);
+    print(currentHour);
+
+    // Calculate the starting minute (rounding down to the nearest multiple of 5)
+    int startMinute = (currentMinute ~/ 5) * 5;
+
+    List<String> times = [];
+    for (int i = 6; i >= 0; i--) {
+      int minute = startMinute - (i * 5);
+      int hour = currentHour;
+
+      // Handle minute overflow
+      if (minute < 0) {
+        minute = 60 + startMinute - (i * 5);
+        hour -= 1;
+      }
+
+      String time =
+          '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
+      times.add(time);
+    }
+    setState(() {
+      timeData = times;
+    });
+  }
+
+  Future getWebsiteData() async {
+    final url = Uri.parse('https://weather.com/weather/today/l/37.54,127.13');
+    final response = await http.get(url);
+    dom.Document html = parser.parse(response.body);
+    final ex = html
+            .querySelector(
+                '#todayDetails > section > div > div.TodayDetailsCard--detailsContainer--2yLtL > div:nth-child(2) > div.WeatherDetailsListItem--wxData--kK35q > span')
+            ?.text
+            .replaceAll("%", "") ??
+        '0';
+    setState(() {
+      b = int.parse(ex);
+    });
+  }
+
   Future<void> _getLastHumiValue() async {
     try {
-      DatabaseReference ref = FirebaseDatabase.instance.ref("humi");
+      DatabaseReference ref = FirebaseDatabase.instance.ref();
       DataSnapshot snapshot = await ref.get();
 
       if (snapshot.exists && snapshot.value != null) {
         Map<dynamic, dynamic> values = snapshot.value as Map<dynamic, dynamic>;
-        String lastKey = values.keys.last.toString();
-        String lastValue = values[lastKey].toString();
+        String lastValue = values['humi'].last.toString();
+        String lastValue2 = values['on'].last.toString();
 
         setState(() {
           humiValue = int.parse(lastValue);
           humidityData.add(humiValue.toDouble());
           if (humidityData.length > 7) {
-            humidityData.removeAt(0); // Keep only the last 7 values
+            humidityData.removeAt(0);
           }
         });
-      } else {
         setState(() {
-          humiValue = 55;
-          humidityData.add(humiValue.toDouble());
-          if (humidityData.length > 7) {
-            humidityData.removeAt(0); // Keep only the last 7 values
-          }
+          a = int.parse(lastValue2);
         });
+
+        if (humiValue < sv) {
+          showNotification();
+        }
       }
     } catch (e) {
       print('Error fetching data from Firebase: $e');
+      setState(() {
+        mt = e.toString();
+      });
     }
+  }
+
+  Future<void> showNotification() async {
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+        AndroidNotificationDetails('your_channel_id', 'your_channel_name',
+            channelDescription: 'your_channel_description',
+            importance: Importance.max,
+            priority: Priority.high,
+            ticker: 'ticker');
+    const NotificationDetails platformChannelSpecifics =
+        NotificationDetails(android: androidPlatformChannelSpecifics);
+    await widget.flutterLocalNotificationsPlugin.show(
+        0, '습도 알림', '현재 강의실 습도가 $sv 이하입니다.', platformChannelSpecifics,
+        payload: 'item x');
   }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      theme: ThemeData(
-        primaryColor: Colors.blue,
-        scaffoldBackgroundColor: Colors.grey[200],
-        buttonTheme: ButtonThemeData(
-          buttonColor: Colors.blueAccent,
-          textTheme: ButtonTextTheme.primary,
-        ),
-      ),
-      home: Scaffold(
-        appBar: AppBar(
-          title: Text('MBC천호 관제 센터'),
-          centerTitle: true,
-        ),
-        body: Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              SizedBox(height: 10),
-              Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: <Widget>[
-                    HumidifierStatus(isOn: a == 1),
-                    SizedBox(width: 10),
-                    ElevatedButton(
-                      onPressed: () {},
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons
-                                .camera_alt, // or any appropriate icon for CCTV
-                            color: Colors.blue, // adjust color as needed
-                            size: 24,
-                          ),
-                          SizedBox(width: 10),
-                          Text(
-                            'CCTV보기',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white, // adjust color as needed
-                            ),
-                          ),
-                        ],
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue[100], // background color
-                        padding:
-                            EdgeInsets.symmetric(vertical: 10, horizontal: 20),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                    ),
-                  ]),
-              SizedBox(height: 30),
-              _buildHumidityCard('외부 습도', b?.toDouble() ?? 0.0),
-              SizedBox(height: 20),
-              _buildHumidityCardWithChart('현재 습도', humiValue.toDouble()),
-              SizedBox(height: 20),
-              Text(
-                '습도 알람 설정 : $sv% 이하',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Colors.blue,
-                ),
-              ),
-              Slider(
-                  value: sv,
-                  max: 100,
-                  divisions: 20,
-                  activeColor: Colors.blue,
-                  thumbColor: Colors.blueAccent,
-                  label: sv.round().toString(),
-                  onChanged: (double value) {
-                    setState(() {
-                      sv = value;
-                    });
-                  }),
-            ],
+        theme: ThemeData(
+          primaryColor: Colors.blue,
+          scaffoldBackgroundColor: Colors.grey[200],
+          buttonTheme: ButtonThemeData(
+            buttonColor: Colors.blueAccent,
+            textTheme: ButtonTextTheme.primary,
           ),
         ),
-      ),
-    );
+        home: Scaffold(
+          appBar: AppBar(
+            title: Text(mt),
+            centerTitle: true,
+          ),
+          body: SingleChildScrollView(
+            scrollDirection: Axis.vertical,
+            child: Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  SizedBox(height: 10),
+                  Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: <Widget>[
+                        HumidifierStatus(isOn: a == 1),
+                        SizedBox(width: 10),
+                        ElevatedButton(
+                          onPressed: () {},
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons
+                                    .camera_alt, // or any appropriate icon for CCTV
+                                color: Colors.blue, // adjust color as needed
+                                size: 24,
+                              ),
+                              SizedBox(width: 10),
+                              Text(
+                                'CCTV보기',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white, // adjust color as needed
+                                ),
+                              ),
+                            ],
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor:
+                                Colors.blue[100], // background color
+                            padding: EdgeInsets.symmetric(
+                                vertical: 10, horizontal: 20),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                        ),
+                      ]),
+                  SizedBox(height: 30),
+                  _buildHumidityCard('외부 습도', b?.toDouble() ?? 0.0),
+                  SizedBox(height: 20),
+                  _buildHumidityCardWithChart('강의실 습도', humiValue.toDouble()),
+                  SizedBox(height: 20),
+                  Text(
+                    '알림설정 : $sv 이하',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue,
+                    ),
+                  ),
+                  Slider(
+                      value: sv,
+                      max: 100,
+                      divisions: 20,
+                      activeColor: Colors.blue,
+                      thumbColor: Colors.blueAccent,
+                      label: sv.round().toString(),
+                      onChanged: (double value) {
+                        setState(() {
+                          sv = value.truncateToDouble();
+                        });
+                      }),
+                ],
+              ),
+            ),
+          ),
+        ));
   }
 
   Widget _buildHumidityCard(String title, double humidity) {
@@ -323,7 +462,7 @@ class _MyAppState extends State<MyApp> {
                         showTitles: true,
                         getTitlesWidget: (value, meta) {
                           return Text(
-                            '${value.toInt()}',
+                            timeData[value.toInt()],
                             style: const TextStyle(
                               color: Colors.blueGrey,
                               fontWeight: FontWeight.bold,
