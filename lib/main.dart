@@ -243,6 +243,7 @@ class _MyAppState extends State<MyApp> {
       if (snapshot.exists && snapshot.value != null) {
         Map<dynamic, dynamic> values = snapshot.value as Map<dynamic, dynamic>;
         String lastValue = values['humi'].last.toString();
+        // String lastValue = values['humi'][values.length-1].toString();
         String lastValue2 = values['on'].last.toString();
 
         setState(() {
@@ -312,7 +313,14 @@ class _MyAppState extends State<MyApp> {
                         HumidifierStatus(isOn: a == 1),
                         SizedBox(width: 10),
                         ElevatedButton(
-                          onPressed: () {},
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => ImageStream(),
+                              ),
+                            );
+                          },
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -328,7 +336,7 @@ class _MyAppState extends State<MyApp> {
                                 style: TextStyle(
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
-                                  color: Colors.white, // adjust color as needed
+                                  color: Colors.white,
                                 ),
                               ),
                             ],
@@ -547,6 +555,38 @@ class HumidifierStatus extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class ImageStream extends StatefulWidget {
+  @override
+  _ImageStreamState createState() => _ImageStreamState();
+}
+
+class _ImageStreamState extends State<ImageStream> {
+  String imageUrl =
+      'http://your_pi_ip_address:5000/image'; // Replace with your Pi's IP address
+
+  Future<http.Response> fetchImage() {
+    return http.get(Uri.parse(imageUrl));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<http.Response>(
+      future: fetchImage(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Center(child: CircularProgressIndicator());
+        } else if (snapshot.hasError) {
+          return Center(child: Text('Error: ${snapshot.error}'));
+        } else {
+          return Center(
+            child: Image.memory(snapshot.data!.bodyBytes),
+          );
+        }
+      },
     );
   }
 }
