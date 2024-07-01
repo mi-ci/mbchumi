@@ -167,7 +167,7 @@ class _MyAppState extends State<MyApp> {
   List<String> timeData = ['0', '0', '0', '0', '0', '0', '0'];
   late Timer timer;
   bool isHumidifierOn = false;
-  int a = Random().nextInt(2);
+  int a = 0;
   double sv = 35;
   String mt = 'MBC천호 관제센터';
 
@@ -242,7 +242,7 @@ class _MyAppState extends State<MyApp> {
 
       if (snapshot.exists && snapshot.value != null) {
         Map<dynamic, dynamic> values = snapshot.value as Map<dynamic, dynamic>;
-        String lastValue = values['humi'].last.toString();
+        String lastValue = values['humi'].last.toString().substring(0, 2);
         // String lastValue = values['humi'][values.length-1].toString();
         String lastValue2 = values['on'].last.toString();
 
@@ -317,7 +317,7 @@ class _MyAppState extends State<MyApp> {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => ImageStream(),
+                                builder: (context) => StreamViewer(),
                               ),
                             );
                           },
@@ -559,34 +559,34 @@ class HumidifierStatus extends StatelessWidget {
   }
 }
 
-class ImageStream extends StatefulWidget {
-  @override
-  _ImageStreamState createState() => _ImageStreamState();
-}
-
-class _ImageStreamState extends State<ImageStream> {
-  String imageUrl =
-      'http://your_pi_ip_address:5000/image'; // Replace with your Pi's IP address
-
-  Future<http.Response> fetchImage() {
-    return http.get(Uri.parse(imageUrl));
-  }
-
+class StreamViewer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<http.Response>(
-      future: fetchImage(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return Center(child: CircularProgressIndicator());
-        } else if (snapshot.hasError) {
-          return Center(child: Text('Error: ${snapshot.error}'));
-        } else {
+    return Center(
+      child: Image.network(
+        'http://172.104.100.179:5001/uploads/frame.jpg', // Use your ngrok public URL
+        headers: {
+          'Cache-Control': 'no-cache'
+        }, // Optional: ensure fresh content
+        loadingBuilder: (BuildContext context, Widget child,
+            ImageChunkEvent? loadingProgress) {
+          if (loadingProgress == null) return child;
           return Center(
-            child: Image.memory(snapshot.data!.bodyBytes),
+            child: CircularProgressIndicator(
+              value: loadingProgress.expectedTotalBytes != null
+                  ? loadingProgress.cumulativeBytesLoaded /
+                      (loadingProgress.expectedTotalBytes ?? 1)
+                  : null,
+            ),
           );
-        }
-      },
+        },
+        errorBuilder:
+            (BuildContext context, Object exception, StackTrace? stackTrace) {
+          return Center(
+            child: Text('Failed to load stream'),
+          );
+        },
+      ),
     );
   }
 }
