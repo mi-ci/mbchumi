@@ -11,6 +11,7 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'dart:typed_data';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -177,7 +178,7 @@ class _MyAppState extends State<MyApp> {
     updateTimeData();
     getWebsiteData();
     _getLastHumiValue();
-    timer = Timer.periodic(Duration(seconds: 300), (Timer t) {
+    timer = Timer.periodic(Duration(seconds: 15), (Timer t) {
       updateTimeData();
       getWebsiteData();
       _getLastHumiValue();
@@ -559,34 +560,57 @@ class HumidifierStatus extends StatelessWidget {
   }
 }
 
-class StreamViewer extends StatelessWidget {
+class StreamViewer extends StatefulWidget {
+  @override
+  _StreamViewerState createState() => _StreamViewerState();
+}
+
+class _StreamViewerState extends State<StreamViewer> {
+  late Timer _timer;
+  Uint8List? _currentImageData;
+  Uint8List? _nextImageData;
+
+  @override
+  void initState() {
+    super.initState();
+    _startImageStream();
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  void _startImageStream() {
+    _timer = Timer.periodic(
+        Duration(milliseconds: 2000), (Timer t) => _fetchImage());
+  }
+
+  Future<void> _fetchImage() async {
+    try {
+      final response = await http
+          .get(Uri.parse('http://172.104.100.179:5001/uploads/frame.jpg'));
+      if (response.statusCode == 200) {
+        setState(() {
+          _nextImageData = response.bodyBytes;
+          // Swap buffers
+          _currentImageData = _nextImageData;
+        });
+      } else {
+        print('Failed to load image');
+      }
+    } catch (e) {
+      print('Error fetching image: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Center(
-      child: Image.network(
-        'http://172.104.100.179:5001/uploads/frame.jpg', // Use your ngrok public URL
-        headers: {
-          'Cache-Control': 'no-cache'
-        }, // Optional: ensure fresh content
-        loadingBuilder: (BuildContext context, Widget child,
-            ImageChunkEvent? loadingProgress) {
-          if (loadingProgress == null) return child;
-          return Center(
-            child: CircularProgressIndicator(
-              value: loadingProgress.expectedTotalBytes != null
-                  ? loadingProgress.cumulativeBytesLoaded /
-                      (loadingProgress.expectedTotalBytes ?? 1)
-                  : null,
-            ),
-          );
-        },
-        errorBuilder:
-            (BuildContext context, Object exception, StackTrace? stackTrace) {
-          return Center(
-            child: Text('Failed to load stream'),
-          );
-        },
-      ),
+      child: _currentImageData == null
+          ? CircularProgressIndicator()
+          : Image.memory(_currentImageData!),
     );
   }
 }
