@@ -175,6 +175,7 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
+    getInitHumivalue();
     updateTimeData();
     getWebsiteData();
     _getLastHumiValue();
@@ -234,6 +235,57 @@ class _MyAppState extends State<MyApp> {
     setState(() {
       b = int.parse(ex);
     });
+  }
+
+  Future getInitHumivalue() async {
+    try {
+      DatabaseReference ref = FirebaseDatabase.instance.ref();
+      DataSnapshot snapshot = await ref.get();
+
+      if (snapshot.exists && snapshot.value != null) {
+        Map<dynamic, dynamic> values = snapshot.value as Map<dynamic, dynamic>;
+        String lastValue = values['humi'].last.toString().substring(0, 2);
+        // String lastValue = values['humi'][values.length-1].toString();
+        String lastValue2 = values['on'].last.toString();
+
+        setState(() {
+          humiValue = int.parse(lastValue);
+          humidityData.add(humiValue.toDouble());
+          if (humidityData.length > 7) {
+            humidityData.removeAt(0);
+          }
+          humidityData.add(humiValue.toDouble());
+          if (humidityData.length > 7) {
+            humidityData.removeAt(0);
+          }
+          humidityData.add(humiValue.toDouble());
+          if (humidityData.length > 7) {
+            humidityData.removeAt(0);
+          }
+          humidityData.add(humiValue.toDouble());
+          if (humidityData.length > 7) {
+            humidityData.removeAt(0);
+          }
+          humidityData.add(humiValue.toDouble());
+          if (humidityData.length > 7) {
+            humidityData.removeAt(0);
+          }
+          humidityData.add(humiValue.toDouble());
+          if (humidityData.length > 7) {
+            humidityData.removeAt(0);
+          }
+          humidityData.add(humiValue.toDouble());
+          if (humidityData.length > 7) {
+            humidityData.removeAt(0);
+          }
+        });
+      }
+    } catch (e) {
+      print('Error fetching data from Firebase: $e');
+      setState(() {
+        mt = e.toString();
+      });
+    }
   }
 
   Future<void> _getLastHumiValue() async {
